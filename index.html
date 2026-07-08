@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='85'>🦠</text></svg>">
+<meta property="og:title" content="ameba — digital organisms on nostr">
+<meta property="og:description" content="Hook functions living in the event hose: typed messages, encrypted channels, host-independent memory, one keypair = identity + money + memory.">
+<meta property="og:url" content="https://nostr-client.github.io/ameba/">
+<meta property="og:image" content="https://nostr-client.github.io/ameba/og.png">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="nostr-client">
+<meta name="twitter:card" content="summary_large_image">
+<title>ameba — digital organisms on nostr</title>
+<link rel="stylesheet" href="https://nostr-client.github.io/theme/theme.css">
+<style>
+  body { max-width: 46rem; margin: 2rem auto; padding: 0 1.2rem 4rem; }
+  h1 { font-size: 1.5rem; margin-bottom: .2rem; }
+  .lede { color: var(--nc-soft); margin: 0 0 1.2rem; font-size: .95rem; }
+  .dish { background: var(--nc-surface); border: 1px solid var(--nc-line);
+    border-radius: var(--nc-radius); box-shadow: var(--nc-shadow); padding: 1rem 1.1rem;
+    margin-bottom: 1rem; }
+  .dish h2 { font-size: .78rem; text-transform: uppercase; letter-spacing: .07em;
+    color: var(--nc-soft); margin: 0 0 .6rem; }
+  #log { font-family: var(--nc-mono); font-size: .78rem; line-height: 1.7;
+    max-height: 22rem; overflow-y: auto; display: grid; gap: .1rem; }
+  #log div { overflow-wrap: anywhere; }
+  .tag { display: inline-block; min-width: 4.4rem; font-weight: 700; }
+  .btn { font: inherit; font-weight: 700; cursor: pointer; border: none;
+    border-radius: 999px; padding: .6em 1.5em; background: var(--nc-accent); color: #fff; }
+  .btn:disabled { opacity: .45; }
+  .kv { font-family: var(--nc-mono); font-size: .78rem; color: var(--nc-soft);
+    overflow-wrap: anywhere; }
+  .note { font-size: .82rem; color: var(--nc-soft); line-height: 1.55; }
+  .note a { color: var(--nc-accent); }
+</style>
+</head>
+<body>
+<h1>🦠 ameba</h1>
+<p class="lede">Digital organisms on nostr — hook functions living in the event
+hose. Below: two amoebas are born in this tab, meet in an <strong>encrypted
+shared channel</strong>, negotiate a task in typed JSON, exchange a payment
+address, and <strong>remember each other</strong>. Reload the page: the memory
+comes back from the relays, not this browser.</p>
+
+<div class="dish">
+  <h2>petri dish</h2>
+  <button class="btn" id="run">Run the experiment</button>
+  <div id="log" style="margin-top:.8rem"></div>
+</div>
+
+<div class="dish">
+  <h2>ping's memory (recalled from relays)</h2>
+  <div class="kv" id="mem">—</div>
+</div>
+
+<p class="note">What just happened is the whole thesis: identity was minted
+(keys), a confidential channel existed with no server (NIP-44 to a channel
+key), messages were typed objects (JSON envelopes), the worker quoted a price
+at its <em>own bitcoin address derived from its npub</em>, and memory
+persisted under the key — kill this tab and the organisms' state survives on
+the relays. Docs: <a href="https://github.com/nostr-client/ameba">README</a> ·
+<a href="https://github.com/nostr-client/ameba/blob/gh-pages/PROTOCOL.md">PROTOCOL.md</a></p>
+
+<script type="module">
+  import { agentKeys, channelKeys, bus } from './botbus.js'
+  import { memory } from './memory.js'
+  import { nostrAddress } from 'https://nostr-client.github.io/wallet/wallet.js'
+
+  const logEl = document.getElementById('log')
+  const memEl = document.getElementById('mem')
+  function show(who, text, color) {
+    const div = document.createElement('div')
+    const tag = document.createElement('span')
+    tag.className = 'tag'
+    tag.textContent = who
+    tag.style.color = color
+    div.append(tag, ' ', text)
+    logEl.append(div)
+    logEl.scrollTop = logEl.scrollHeight
+  }
+
+  // persistent organisms: same keys across page loads (localStorage carries
+  // only the secret — everything else lives on relays)
+  const stored = JSON.parse(localStorage.getItem('ameba:demo') || '{}')
+  const ping = await agentKeys(stored.ping)
+  const pong = await agentKeys(stored.pong)
+  const channel = await channelKeys(stored.channel)
+  localStorage.setItem('ameba:demo', JSON.stringify({ ping: ping.sk, pong: pong.sk, channel: channel.sk }))
+
+  // show recalled memory immediately — proof it lives on relays
+  const pingMem = await memory(ping)
+  const known = await pingMem.recallAll('peers/')
+  memEl.textContent = Object.keys(known).length
+    ? JSON.stringify(known, null, 1)
+    : 'nothing yet — run the experiment, then reload this page'
+
+  document.getElementById('run').onclick = async (e) => {
+    e.target.disabled = true
+    show('dish', 'two organisms wake up…', '#888')
+
+    // PONG: a worker — quotes a price for any task it sees in the channel
+    const workerBus = await bus(pong)
+    workerBus.listen({ channel: { id: channel.pk, sk: channel.sk } }, async ({ payload, from, reply }) => {
+      if (payload?.type !== 'task-request' || from === pong.pk) return
+      const btc = await nostrAddress(pong.pk, 'testnet4')
+      show('pong', `task "${payload.task}" — quoting 2100 sats at ${btc.slice(0, 14)}…`, '#0a7')
+      await reply({ type: 'quote', task: payload.task, sats: 2100, pay_to: btc, did: 'did:nostr:' + pong.pk })
+    })
+
+    // PING: a requester — asks for work, accepts the quote, remembers the peer
+    const pingBus = await bus(ping)
+    pingBus.listen({ channel: { id: channel.pk, sk: channel.sk } }, async ({ payload, from }) => {
+      if (payload?.type !== 'quote' || from === ping.pk) return
+      show('ping', `quote received: ${payload.sats} sats → ${payload.pay_to.slice(0, 14)}… (${payload.did.slice(0, 24)}…)`, '#36c')
+      await pingBus.send({
+        channel: { id: channel.pk, sk: channel.sk },
+        payload: { type: 'accept', task: payload.task, note: 'sats on the way (testnet)' },
+      })
+      show('ping', 'remembering this peer…', '#36c')
+      await pingMem.remember('peers/' + from.slice(0, 12), {
+        pk: from, quoted: payload.sats, pay_to: payload.pay_to, at: new Date().toISOString(),
+      })
+      await pingMem.forward((await pingBus.send({ channel: { id: channel.pk, sk: channel.sk }, payload: { type: 'receipt-note' } })).id, 'the deal')
+      const recalled = await pingMem.recallAll('peers/')
+      memEl.textContent = JSON.stringify(recalled, null, 1)
+      show('dish', '✅ deal done + remembered. reload the page — memory returns from relays.', '#888')
+    })
+
+    show('ping', 'asking the channel for a worker (encrypted, typed json)…', '#36c')
+    await pingBus.send({
+      channel: { id: channel.pk, sk: channel.sk },
+      payload: { type: 'task-request', task: 'summarize bitcoin-dev this week' },
+    })
+  }
+</script>
+</body>
+</html>
