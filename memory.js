@@ -29,7 +29,7 @@ const NS = 'ameba'  // namespaces our d-tags: d = "ameba/<key>"
 const hexToBytes = (hex) => new Uint8Array(hex.match(/.{2}/g).map((b) => parseInt(b, 16)))
 
 export async function memory({ sk, pk }, { relays = DEFAULT_RELAYS, pool } = {}) {
-  const [{ finalizeEvent }, { nip44 }] = await Promise.all([
+  const [{ finalizeEvent }, nip44] = await Promise.all([
     import(`${TOOLS}/pure`), import(`${TOOLS}/nip44`),
   ])
   const skBytes = hexToBytes(sk)

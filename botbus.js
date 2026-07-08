@@ -28,7 +28,7 @@ export const KIND_EPHEMERAL = 24242 // realtime-only: delivered, never stored
 let _tools = null
 async function tools() {
   if (!_tools) {
-    const [pure, { nip44 }] = await Promise.all([import(`${TOOLS}/pure`), import(`${TOOLS}/nip44`)])
+    const [pure, nip44] = await Promise.all([import(`${TOOLS}/pure`), import(`${TOOLS}/nip44`)])
     _tools = { ...pure, nip44 }
   }
   return _tools
